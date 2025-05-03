@@ -25,6 +25,44 @@
             padding: 10px;
             font-family: monospace;
         }
+        .error {
+            color: #dc3545;
+        }
+        .success {
+            color: #198754;
+        }
+        .help-text {
+            font-size: 0.875em;
+            color: #6c757d;
+            margin-top: 0.25rem;
+        }
+        .invalid-input {
+            border-color: #dc3545;
+        }
+        /* Placeholder styles */
+        ::placeholder {
+            color: #adb5bd !important;
+            opacity: 1 !important;
+        }
+        :-ms-input-placeholder {
+            color: #adb5bd !important;
+        }
+        ::-ms-input-placeholder {
+            color: #adb5bd !important;
+        }
+        /* Loading spinner */
+        .spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 0.2em solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: spinner-border .75s linear infinite;
+        }
+        @keyframes spinner-border {
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -34,16 +72,34 @@
         <div class="row">
             <div class="col-md-8">
                 <div class="mb-3">
-                    <label for="code-editor" class="form-label">Python Function:</label>
+                    <label for="language-select" class="form-label">Language:</label>
+                    <select class="form-select" id="language-select" onchange="changeLanguage()">
+                        <option value="python">Python</option>
+                        <option value="javascript">JavaScript</option>
+                        <option value="typescript">TypeScript</option>
+                        <option value="clike">C/C++</option>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label for="code-editor" class="form-label">Code:</label>
                     <textarea id="code-editor"></textarea>
                 </div>
                 
                 <div class="mb-3">
-                    <label for="arguments" class="form-label">Arguments (Python list format):</label>
-                    <input type="text" class="form-control" id="arguments" placeholder="[1, 2, 3]">
+                    <label for="arguments" class="form-label">Arguments:</label>
+                    <input type="text" class="form-control" id="arguments" 
+                           placeholder="10, 2">
+                    <div class="help-text">
+                        Enter arguments separated by commas. Example: 10, 2<br>
+                        Numbers will be automatically converted to the correct type.
+                    </div>
                 </div>
                 
-                <button class="btn btn-primary" onclick="executeCode()">Execute</button>
+                <button class="btn btn-primary" onclick="executeCode()" id="executeButton">
+                    <span id="buttonText">Execute</span>
+                    <span id="buttonSpinner" class="spinner d-none" role="status"></span>
+                </button>
             </div>
             
             <div class="col-md-4">
@@ -53,8 +109,17 @@
         </div>
     </div>
 
+    <!-- CodeMirror Core -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+    
+    <!-- Language Modes -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/python/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/javascript/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/clike/clike.min.js"></script>
+    
+    <!-- Acorn for parsing JavaScript/TypeScript -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/acorn/8.10.0/acorn.min.js"></script>
+    
     <script>
         // Initialize CodeMirror
         var editor = CodeMirror.fromTextArea(document.getElementById("code-editor"), {
@@ -66,9 +131,45 @@
             lineWrapping: true
         });
 
-        // Set default code
-        editor.setValue(`def example_function(x, y):
-    return x / y`);
+        // Add Enter key handler for CodeMirror
+        editor.on("keydown", function(cm, event) {
+            if (event.keyCode === 13 && event.ctrlKey) {  // Ctrl + Enter
+                event.preventDefault();
+                executeCode();
+            }
+        });
+
+        // Add Enter key handler for arguments input
+        document.getElementById("arguments").addEventListener("keydown", function(event) {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                executeCode();
+            }
+        });
+
+        // Default code examples for each language
+        const defaultCode = {
+            python: `def example_function(x, y):
+    return x / y`,
+            javascript: `function exampleFunction(x, y) {
+    return x / y;
+}`,
+            typescript: `function exampleFunction(x: number, y: number): number {
+    return x / y;
+}`,
+            clike: `int example_function(int x, int y) {
+    return x / y;
+}`
+        };
+
+        // Set initial code
+        editor.setValue(defaultCode.python);
+
+        function changeLanguage() {
+            const language = document.getElementById("language-select").value;
+            editor.setOption("mode", language === "typescript" ? "javascript" : language);
+            editor.setValue(defaultCode[language]);
+        }
 
         function getCookie(name) {
             let cookieValue = null;
@@ -85,35 +186,80 @@
             return cookieValue;
         }
 
-        function executeCode() {
-            const code = editor.getValue();
-            const args = document.getElementById("arguments").value;
+        function setLoading(isLoading) {
+            const button = document.getElementById('executeButton');
+            const buttonText = document.getElementById('buttonText');
+            const buttonSpinner = document.getElementById('buttonSpinner');
+            
+            if (isLoading) {
+                button.disabled = true;
+                buttonText.textContent = 'Executing...';
+                buttonSpinner.classList.remove('d-none');
+            } else {
+                button.disabled = false;
+                buttonText.textContent = 'Execute';
+                buttonSpinner.classList.add('d-none');
+            }
+        }
+
+        async function executeCode() {
+            const code = editor.getValue().trim();
+            const language = document.getElementById("language-select").value;
+            const argsInput = document.getElementById("arguments");
             const output = document.getElementById("output");
             
-            output.innerHTML = "Executing...";
-            
-            fetch("/execute/", {
-                method: "POST",
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': getCookie('csrftoken')
-                },
-                body: JSON.stringify({
-                    function_code: code,
-                    arguments: args
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === "success") {
-                    output.innerHTML = data.result;
-                } else {
-                    output.innerHTML = `Error: ${data.error}`;
-                }
-            })
-            .catch(error => {
-                output.innerHTML = `Error: ${error.message}`;
+            // Parse comma-separated arguments
+            const argsArray = argsInput.value.split(',').map(arg => {
+                const trimmed = arg.trim();
+                return isNaN(trimmed) ? trimmed : Number(trimmed);
             });
+            
+            // Create argument object with sequential keys
+            const args = {};
+            argsArray.forEach((value, index) => {
+                args[`arg${index + 1}`] = value;
+            });
+            
+            setLoading(true);
+            output.innerHTML = '<div class="text-info">Executing...</div>';
+            
+            try {
+                const requestBody = {
+                    function_code: code,
+                    arguments: JSON.stringify(args),
+                    language: language
+                };
+                
+                console.log('Sending request:', requestBody);
+                
+                const response = await fetch("/execute/", {
+                    method: "POST",
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCookie('csrftoken'),
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const data = await response.json();
+                console.log('Received response:', data);
+
+                if (!response.ok) {
+                    throw new Error(data.error || `HTTP error! status: ${response.status}`);
+                }
+                
+                if (data.status === "success") {
+                    output.innerHTML = `<div class="success">${data.result}</div>`;
+                } else {
+                    output.innerHTML = `<div class="error">Error: ${data.error}</div>`;
+                }
+            } catch (error) {
+                console.error('Error details:', error);
+                output.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            } finally {
+                setLoading(false);
+            }
         }
     </script>
 </body>
