@@ -1,13 +1,15 @@
-from pydantic import BaseModel
-from typing import Callable
+from dataclasses import dataclass
+from typing import Any, List, Dict, Optional, Callable
 
-class State(BaseModel):
+
+@dataclass
+class State:
+    error: bool
     function: Callable
     function_string: str
-    arguments: list
-    error: bool
-    error_description: str = ""
-    new_function_string: str = ""
-    bug_report: str = ""
-    memory_search_results: list = []
-    memory_ids_to_update: list = []
+    arguments: List[Any]
+    error_message: Optional[str] = None
+    error_type: Optional[str] = None
+    result: Optional[Any] = None
+    bug_report: Optional[Dict[str, Any]] = None
+    similar_bugs: Optional[List[Dict[str, Any]]] = None

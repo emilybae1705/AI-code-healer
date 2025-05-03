@@ -1,38 +1,76 @@
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.schema import HumanMessage
 from langchain_openai import ChatOpenAI
-from config import MODEL, CHROMA_PERSIST_DIRECTORY, CHROMA_COLLECTION_NAME
-from state import State
+from src.config import MODEL, CHROMA_PERSIST_DIRECTORY, CHROMA_COLLECTION_NAME
+from src.core.state import State
 import inspect
 import chromadb
 import uuid
+from typing import List, Dict, Any, Optional, Tuple
 
 
-class CodeHealerNodes:
-    def __init__(self):
-        self.graph = StateGraph(State)
-        self.llm = ChatOpenAI(model=MODEL)  # gpt-4o-mini
-        self.collection = chromadb.PersistentClient(
-            path=CHROMA_PERSIST_DIRECTORY
-        ).create_collection(name=CHROMA_COLLECTION_NAME)
+class Nodes:
+    llm = ChatOpenAI(model=MODEL)  # gpt-4o-mini
+    client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIRECTORY)
+    try:
+        collection = client.get_collection(name=CHROMA_COLLECTION_NAME)
+    except:
+        collection = client.create_collection(name=CHROMA_COLLECTION_NAME)
 
-    def code_executor(self, state: State):
-        """Run User Code"""
+    @staticmethod
+    def code_executor(state: State) -> State:
         try:
-            print("\nRunning Arbitrary Function")
-            print("--------------------------\n")
+            # Execute the function with the provided arguments
             result = state.function(*state.arguments)
-            print("\n✅ Arbitrary Function Ran Successfully")
-            print(f"Result: {result}")
-            print("-----------------------------------\n")
+            state.result = result
+            state.error = False
+            return state
         except Exception as e:
-            print(f"❌ Function Raised Error: {e}")
             state.error = True
-            state.error_description = str(e)
+            state.error_message = str(e)
+            return state
+
+    @staticmethod
+    def error_detector(state: State) -> State:
+        if state.error:
+            state.error_type = type(state.error_message).__name__
+            return state
         return state
 
-    def code_updater(self, state: State):
+    @staticmethod
+    def bug_reporter(state: State) -> State:
+        if state.error:
+            state.bug_report = {
+                "error_type": state.error_type,
+                "error_message": state.error_message,
+                "function_string": state.function_string,
+                "arguments": str(state.arguments),
+            }
+        return state
+
+    @staticmethod
+    def memory_manager(state: State) -> State:
+        # Store the bug report
+        collection.add(
+            documents=[str(state.bug_report)],
+            metadatas=[{"error_type": state.error_type}],
+            ids=[str(uuid.uuid4())],
+        )
+
+        # Query similar bug reports
+        results = collection.query(query_texts=[str(state.bug_report)], n_results=5)
+        state.similar_bugs = results
+        return state
+
+    @staticmethod
+    def code_healer(state: State) -> State:
+        # Implement code healing logic here
+        # This is where you would use the similar bugs to suggest fixes
+        return state
+
+    @staticmethod
+    def code_updater(state: State):
         """Connects with OpenAI API to update user's buggy code"""
         prompt = ChatPromptTemplate.from_template(
             "You are tasked with fixing a Python function that raised an error."
@@ -51,7 +89,7 @@ class CodeHealerNodes:
                 error_description=state.error_description,
             )
         )
-        new_function_string = self.llm.invoke([message]).content.strip()
+        new_function_string = Nodes.llm.invoke([message]).content.strip()
 
         print("\n⚠️ Buggy Function")
         print("-------------------\n")
@@ -63,7 +101,8 @@ class CodeHealerNodes:
         state.new_function_string = new_function_string
         return state
 
-    def code_patcher(self, state: State):
+    @staticmethod
+    def code_patcher(state: State):
         """Verifies new function generated has the same signature as the original
         and updates state if no errors occur during validation process"""
         try:
@@ -100,30 +139,8 @@ class CodeHealerNodes:
         print("******************\n")
         return state
 
-    def bug_reporter(self, state: State):
-        """Generates Bug Report"""
-        prompt = ChatPromptTemplate.from_template(
-            "You are tasked with generating a bug report for a Python function that raised an error."
-            "Function: {function_string}"
-            "Error: {error_description}"
-            "Your response must be a comprehensive string including only crucial information on the bug report"
-        )
-        message = HumanMessage(
-            content=prompt.format(
-                function_string=state.function_string,
-                error_description=state.error_description,
-            )
-        )
-        bug_report = self.llm.invoke([message]).content.strip()
-
-        print("\n📝 Generating Bug Report")
-        print("------------------------\n")
-        print(bug_report)
-
-        state.bug_report = bug_report
-        return state
-
-    def memory_searcher(self, state: State):
+    @staticmethod
+    def memory_searcher(state: State):
         """Find memories relevant to the current bug report"""
         prompt = ChatPromptTemplate.from_template(
             "You are tasked with archiving a bug report for a Python function that raised an error."
@@ -133,8 +150,8 @@ class CodeHealerNodes:
         )
 
         message = HumanMessage(content=prompt.format(bug_report=state.bug_report))
-        response = self.llm.invoke([message]).content.strip()
-        results = self.collection.query(query_texts=[response])
+        response = Nodes.llm.invoke([message]).content.strip()
+        results = Nodes.collection.query(query_texts=[response])
 
         print("\nSearching bug reports...")
         if results["ids"][0]:
@@ -153,7 +170,8 @@ class CodeHealerNodes:
 
         return state
 
-    def memory_filter(self, state: State):
+    @staticmethod
+    def memory_filter(state: State):
         """Filters top 30% of results to ensure relevance of memories stays updated"""
         print("\nFiltering bug reports...")
 
@@ -168,7 +186,8 @@ class CodeHealerNodes:
 
         return state
 
-    def memory_generator(self, state: State):
+    @staticmethod
+    def memory_generator(state: State):
         """Condenses bug report and generates relevant memories before storing in ChromaDB Vector Database"""
         prompt = ChatPromptTemplate.from_template(
             "You are tasked with archiving a bug report for a Python function that raised an error."
@@ -178,16 +197,88 @@ class CodeHealerNodes:
         )
 
         message = HumanMessage(content=prompt.format(bug_report=state.bug_report))
-        response = self.llm.invoke([message]).content.strip()
+        response = Nodes.llm.invoke([message]).content.strip()
 
         print("\n💾 Saving Bug Report to Memory")
         print("------------------------------\n")
         print(response)
 
         id = str(uuid.uuid4())
-        self.collection.add(
+        Nodes.collection.add(
             ids=[id],
             documents=[response],
         )
 
         return state
+
+    @staticmethod
+    def memory_modifier(state: State):
+        """Update relevant memories with new interaction information"""
+        prompt = ChatPromptTemplate.from_template(
+            "Update the following memories based on the new interaction:"
+            "Current Bug Report: {bug_report}"
+            "Prior Bug Report: {memory_to_update}"
+            "Your response must be a concise but cumulative string including only crucial information\
+            on the current and prior bug reports for future reference."
+            "Format: # function_name ## error_description ### error_analysis"
+        )
+        memory_to_update_id = state.memory_ids_to_update.pop(0)
+        state.memory_search_results.pop(0)
+        results = Nodes.collection.get(ids=[memory_to_update_id])
+        memory_to_update = results["documents"][0]
+        message = HumanMessage(
+            content=prompt.format(
+                bug_report=state.bug_report,
+                memory_to_update=memory_to_update,
+            )
+        )
+
+        response = Nodes.llm.invoke([message]).content.strip()
+
+        print("\nCurrent Bug Report")
+        print("-------------------\n")
+        print(memory_to_update)
+        print("\nWill be replaced with")
+        print("-------------------\n")
+        print(response)
+
+        Nodes.collection.update(
+            ids=[memory_to_update_id],
+            documents=[response],
+        )
+
+        return state
+
+
+class Edges:
+    @staticmethod
+    def has_error(state: State) -> bool:
+        return state.error
+
+    @staticmethod
+    def no_error(state: State) -> bool:
+        return not state.error
+
+    def error_router(state: State):
+        if state.error:
+            return "bug_reporter"
+        else:
+            return END
+
+    def memory_filter_router(state: State):
+        if state.memory_search_results:
+            return "memory_filter"
+        else:
+            return "memory_generator"
+
+    def memory_generation_router(state: State):
+        if state.memory_ids_to_update:
+            return "memory_modifier"
+        else:
+            return "memory_generator"
+
+    def memory_update_router(state: State):
+        if state.memory_ids_to_update:
+            return "memory_modifier"
+        else:
+            return "code_updater"
