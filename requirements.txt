@@ -7,5 +7,3 @@ openai>=1.0.0
 python-dotenv>=1.0.0
 gunicorn>=21.2.0
 whitenoise>=6.6.0
-langgraph>=0.0.15
-chromadb>=0.4.22
