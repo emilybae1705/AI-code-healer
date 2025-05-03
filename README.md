@@ -117,7 +117,7 @@ git push heroku main
 
 ### 1. Intelligent Code Analysis
 - Automated error detection and correction
-- Pattern-based learning using vector databases (ChromaDB)
+- Pattern-based learning using vector databases
 - Semantic code understanding and analysis
 - Context-aware bug fixing
 
@@ -162,6 +162,14 @@ AI-code-healer/
 │   ├── views.py        # View logic and language execution
 │   ├── urls.py         # URL routing
 │   └── models.py       # Data models
+├── src/                # Core functionality
+│   ├── core/           # Core implementation
+│   │   ├── build.py    # Build process
+│   │   ├── graph.py    # Graph-based workflow
+│   │   └── state.py    # State management
+│   ├── healer.py       # Main healing logic
+│   ├── config.py       # Configuration
+│   └── test_healer.py  # Test suite
 ├── static/             # Static files (CSS, JS)
 ├── manage.py           # Django management
 └── requirements.txt    # Dependencies
