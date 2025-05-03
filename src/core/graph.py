@@ -7,11 +7,11 @@ from src.core.state import State
 import inspect
 import chromadb
 import uuid
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 
 
 class Nodes:
-    llm = ChatOpenAI(model=MODEL)  # gpt-4o-mini
+    llm = ChatOpenAI(model=MODEL)
     client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIRECTORY)
     try:
         collection = client.get_collection(name=CHROMA_COLLECTION_NAME)
@@ -52,21 +52,58 @@ class Nodes:
     @staticmethod
     def memory_manager(state: State) -> State:
         # Store the bug report
-        collection.add(
+        Nodes.collection.add(
             documents=[str(state.bug_report)],
             metadatas=[{"error_type": state.error_type}],
             ids=[str(uuid.uuid4())],
         )
 
         # Query similar bug reports
-        results = collection.query(query_texts=[str(state.bug_report)], n_results=5)
+        results = Nodes.collection.query(
+            query_texts=[str(state.bug_report)], n_results=5
+        )
         state.similar_bugs = results
         return state
 
     @staticmethod
     def code_healer(state: State) -> State:
-        # Implement code healing logic here
-        # This is where you would use the similar bugs to suggest fixes
+        if state.error and state.similar_bugs:
+            prompt = ChatPromptTemplate.from_template(
+                "You are tasked with fixing a Python function that raised an error.\n"
+                "Function: {function_string}\n"
+                "Error: {error_message}\n"
+                "Similar bugs: {similar_bugs}\n"
+                "You must provide a fix for the present error only.\n"
+                "The bug fix should handle the thrown error case gracefully.\n"
+                "The function must use the exact same name and parameters.\n"
+                "Your response must contain only the function definition with no additional text."
+            )
+
+            message = HumanMessage(
+                content=prompt.format(
+                    function_string=state.function_string,
+                    error_message=state.error_message,
+                    similar_bugs=str(state.similar_bugs),
+                )
+            )
+
+            new_function_string = Nodes.llm.invoke([message]).content.strip()
+
+            # Update the function
+            namespace = {}
+            exec(new_function_string, namespace)
+            func_name = state.function.__name__
+            state.function = namespace[func_name]
+
+            # Try the function again
+            try:
+                result = state.function(*state.arguments)
+                state.result = result
+                state.error = False
+            except Exception as e:
+                state.error = True
+                state.error_message = str(e)
+
         return state
 
     @staticmethod

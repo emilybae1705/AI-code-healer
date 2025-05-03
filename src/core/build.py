@@ -1,4 +1,3 @@
-from langgraph.prebuilt import ToolExecutor
 from langgraph.graph import Graph, END
 from src.core.graph import Nodes, Edges
 
@@ -17,7 +16,6 @@ graph.set_entry_point("code_executor")
 
 # Add edges
 graph.add_edge("code_executor", "error_detector")
-graph.add_edge("error_detector", "bug_reporter")
 graph.add_edge("bug_reporter", "memory_manager")
 graph.add_edge("memory_manager", "code_healer")
 graph.add_edge("code_healer", "code_executor")
